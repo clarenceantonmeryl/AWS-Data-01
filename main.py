@@ -8,7 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Econding
+# Encoding
 from sklearn.preprocessing import LabelEncoder
 
 # Imputing
@@ -32,6 +32,7 @@ from sklearn.linear_model import LogisticRegression
 
 # Metrics
 from sklearn.metrics import accuracy_score
+import time
 
 # kNN
 from sklearn.neighbors import KNeighborsClassifier
@@ -46,9 +47,15 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import AdaBoostClassifier
 
 # DNN
-# import keras
-# from keras.models import Sequential
-# from keras.layers import Dense
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.optimizers import Adam
+
+# XG Boost
+import xgboost as xgb
+
+# Light GBM
+from lightgbm import LGBMClassifier
 
 # Preprocessing
 
@@ -192,8 +199,10 @@ def standard_scaler(df):
     :param df: Pandas DataFrame
     :return: Pandas DataFrame
     """
-    scaled_array = StandardScaler().fit_transform(df.values)
-    df_scaled = pd.DataFrame(scaled_array, columns=FEATURE_NAMES + [CLASS_NAME])
+    scaler = StandardScaler()
+    df_scaled = scaler.fit_transform(df)
+    # scaled_array = StandardScaler().fit_transform(df.values)
+    # df_scaled = pd.DataFrame(scaled_array, columns=FEATURE_NAMES + [CLASS_NAME])
     return df_scaled
 
 
@@ -325,7 +334,7 @@ def predict_incomes(imputer, impute_k, scaler, balancer, k_balance, algorithm, k
     :param scaler: 'min_max', 'standard' or 'robust'
     :param balancer: 'ros', 'rus', 'nm1', 'nm2', 'nm3' or 'smote'
     :param k_balance: k value of the smote
-    :param algorithm: 'tree', 'log_reg'
+    :param algorithm: 'tree', 'log_reg', 'kNN', 'svm', 'random_forest', 'ada', 'dnn', 'xgboost'
     :param k_algorithm: k value of the kNN algorithm
     :return:
     """
@@ -346,8 +355,10 @@ def predict_incomes(imputer, impute_k, scaler, balancer, k_balance, algorithm, k
         df_scaled = min_max_scaler(df_imputed)
     elif scaler == 'standard':  # 'Continuous' bug!
         df_scaled = standard_scaler(df_imputed)
-    else:
+    elif scaler == 'robust':
         df_scaled = robust_scaler(df_imputed)
+    else:
+        df_scaled = df_imputed.copy(deep=True)
 
     # Splitting
     X_train, X_test, y_train, y_test = split(df_scaled)
@@ -363,34 +374,47 @@ def predict_incomes(imputer, impute_k, scaler, balancer, k_balance, algorithm, k
         X_resampled, y_resampled = near_miss(X_train, y_train, 2)
     elif balancer == 'nm3':
         X_resampled, y_resampled = near_miss(X_train, y_train, 3)
-    else:
+    elif balancer == 'smote':
         X_resampled, y_resampled = smote(X_train, y_train, k_balance)
+    else:
+        X_resampled = X_train
+        y_resampled = y_train
 
     # Algorithms
     if algorithm == 'tree':
         clf = decision_tree(X_resampled, y_resampled)
         print(f"The accuracy of the decision tree on test set is {get_accuracy(clf, X_test, y_test) * 100}%")
+
     elif algorithm == 'log_reg':  # Convergence Warning?
         logmodel = LogisticRegression()
         logmodel.fit(X_resampled, y_resampled)
         y_pred_log = logmodel.predict(X_test)
         print(f'The accuracy of the logistic regression on test set is {accuracy_score(y_test, y_pred_log) * 100} %')
 
-    elif algorithm == 'kNN':  # Throws Error
-        knn = KNeighborsClassifier(n_neighbors=4)
-        knn.fit(X_train, y_train)
-        y_pred_knn = knn.predict(X_test)
-        print(f'The accuracy of the kNN on test set is {accuracy_score(y_test, y_pred_knn) * 100} %')
+    elif algorithm == 'kNN':
+        # Standardising (solution to previous bug)
+        scaler = StandardScaler()
+        X_resampled = scaler.fit_transform(X_resampled)
+        X_test = scaler.transform(X_test)
+
+        model = KNeighborsClassifier(n_neighbors=k_algorithm)
+
+        model.fit(X_resampled, y_train)
+
+        y_pred = model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+
+        print(f"Model Accuracy: {accuracy * 100}%")
 
     elif algorithm == 'svm':  # Future Warning
         svm_model = LinearSVC()
-        svm_model.fit(X_train, y_train)
+        svm_model.fit(X_resampled, y_resampled)
         y_pred_svm = svm_model.predict(X_test)
         print(f'The accuracy of the SVM on test set is {accuracy_score(y_test, y_pred_svm) * 100} %')
 
     elif algorithm == 'random_forest':
         rnd_clf = RandomForestClassifier(n_estimators=500, max_leaf_nodes=10000, n_jobs=-1, random_state=RANDOM_STATE)
-        rnd_clf.fit(X_train, y_train)
+        rnd_clf.fit(X_resampled, y_resampled)
 
         y_pred_rf = rnd_clf.predict(X_test)
         print(f'The accuracy of the Random Forest on test set is {accuracy_score(y_test, y_pred_rf) * 100} %')
@@ -400,36 +424,52 @@ def predict_incomes(imputer, impute_k, scaler, balancer, k_balance, algorithm, k
         ada_clf = AdaBoostClassifier(
             tree.DecisionTreeClassifier(max_depth=2), n_estimators=200, learning_rate=0.5, random_state=RANDOM_STATE)
 
-        ada_clf.fit(X_train, y_train)
+        ada_clf.fit(X_resampled, y_resampled)
 
         y_pred_adab_dtree = ada_clf.predict(X_test)
 
         print(f'The ADABoost with decision trees accuracy is {accuracy_score(y_test, y_pred_adab_dtree) * 100} %')
 
-    # elif algorithm == 'dnn':
-    #     # Initialising the ANN - start the sequential model
-    #     classifier = Sequential()
-    #
-    #     # Adding the input layer and the first hidden layer. Kernal initializer initializes the input weights for
-    #     # uniform distribution.
-    #     classifier.add(Dense(units=6, kernel_initializer='uniform', activation='relu', input_dim=31))
-    #
-    #     # Adding the second hidden layer
-    #     classifier.add(Dense(units=6, kernel_initializer='uniform', activation='relu'))
-    #
-    #     # Adding the output layer
-    #     classifier.add(Dense(units=1, kernel_initializer='uniform', activation='sigmoid'))
-    #
-    #     # Compiling the ANN
-    #     classifier.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    elif algorithm == 'dnn':
+        model = Sequential()
+        model.add(Dense(64, input_dim=X_train.shape[1], activation='relu'))
+        model.add(Dense(32, activation='relu'))
+        model.add(Dense(1, activation='sigmoid'))
 
+        model.compile(loss='binary_crossentropy', optimizer=Adam(learning_rate=0.001), metrics=['accuracy'])
 
-# :param imputer: 'simple' or 'kNN'
-# :param impute_k: k value of kNN imputer (put random number if not used)
-# :param scaler: 'min_max', 'standard' or 'robust'
-# :param balancer: 'ros', 'rus', 'nm1', 'nm2', 'nm3' or 'smote'
-# :param k_balance: k value of the smote
-# :param algorithm: 'tree', 'log_reg'
+        epochs = 50
+        batch_size = 128
+        history = model.fit(X_resampled, y_resampled, epochs=epochs, batch_size=batch_size, validation_split=0.1)
+
+        loss, accuracy = model.evaluate(X_test, y_test)
+        print(f"Test loss: {loss}, Test accuracy: {accuracy}")
+
+    elif algorithm == 'xgboost':
+        model = xgb.XGBClassifier(objective='binary:logistic', random_state=RANDOM_STATE)
+
+        model.fit(X_resampled, y_resampled)
+
+        y_pred = model.predict(X_test)
+
+        accuracy = accuracy_score(y_test, y_pred)
+        print(f"The accuracy of the XGBoost on test set is {accuracy * 100}")
+
 
 # Running Function
-predict_incomes('simple', 0, 'min_max', 'smote', 5, 'ada', 0)
+start_time = time.time()
+
+predict_incomes(
+    imputer='simple',
+    impute_k=0,
+    scaler='min_max',
+    balancer='none',
+    k_balance=0,
+    algorithm='xgboost',
+    k_algorithm=0
+)
+
+end_time = time.time()
+execution_time = end_time - start_time
+
+print(f"The code ran in {execution_time} seconds")
